@@ -7,7 +7,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runExplore, credLineOf, signupCreds, entryLineOf } from '../core/explore.mjs';
+import { runExplore, credLineOf, signupCreds, entryLineOf, withSafeMode } from '../core/explore.mjs';
 import { exploreSystem } from './prompts.mjs';
 import { TURN } from './schema.mjs';
 import { createWebDriver } from './driver.mjs';
@@ -49,7 +49,7 @@ const ABOUT = INPUTS.about ? String(INPUTS.about).trim() : `No description provi
 // INSTRUCTIONS_DIR mirrors INPUTS_DIR: CI/packaged callers materialize instructions
 // somewhere writable; HERE is read-only in those contexts.
 const instrPath = join(process.env.INSTRUCTIONS_DIR || join(HERE, 'instructions'), `${TARGET}.md`);
-const APP_INSTRUCTIONS = existsSync(instrPath) ? readFileSync(instrPath, 'utf8').trim() : '';
+const APP_INSTRUCTIONS = withSafeMode(existsSync(instrPath) ? readFileSync(instrPath, 'utf8').trim() : '');
 
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const RUN = process.env.RUN_DIR || join(HERE, 'runs', `${TARGET}__explore__${stamp}`);

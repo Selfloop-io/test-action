@@ -6,6 +6,9 @@
 //                             expensive work — a drained account fails in
 //                             seconds, not after minutes of build + LLM spend)
 //   node backend.mjs upload   zip $RUN_DIR and POST it against $AUTOBOT_RUN_ID
+//   node backend.mjs log      ship the run outcome (or its absence — a run
+//                             step that died before ci-summary.json) to our
+//                             operational-telemetry store; always() step
 //
 // `start` is fatal only on a definitive 402 (out of runs); backend outages
 // degrade to a warning + no run-id, which skips upload — the LLM relay still
@@ -121,5 +124,46 @@ if (cmd === 'upload') {
   process.exit(0);
 }
 
-console.error(`backend: unknown command "${cmd}" (expected start|upload)`);
+if (cmd === 'log') {
+  // Operational telemetry (why did OUR run fail?), distinct from the report
+  // upload (what did the run find?). Runs on if:always() so an explore/infra
+  // death that never wrote ci-summary.json still leaves a trace in our DB.
+  const runDir = process.env.RUN_DIR || '';
+  const summaryPath = runDir ? join(runDir, 'ci-summary.json') : '';
+  let summary = null;
+  try { summary = JSON.parse(readFileSync(summaryPath, 'utf8')); } catch { /* run step died before writing it */ }
+
+  const failed = !summary;
+  const event = {
+    ts: new Date().toISOString(),
+    level: failed ? 'error' : summary.phaseErrors ? 'warn' : 'info',
+    event: failed ? 'ci_run_failed' : 'ci_run_finished',
+    ...runMeta(),
+    run_id: process.env.AUTOBOT_RUN_ID || null,
+    run_step_outcome: process.env.AUTOBOT_RUN_OUTCOME || null,
+    ...(summary ? {
+      gate: summary.gate ?? null,
+      counts: summary.counts ?? null,
+      phase_errors: summary.phaseErrors ?? null,
+      duration_ms: summary.durationMs ?? null,
+    } : { error: 'run step produced no ci-summary.json (explore or infra failure before summary)' }),
+  };
+
+  try {
+    const res = await fetch(`${BACKEND}/autobot-relay/log`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ events: [event] }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    console.log(`backend: telemetry logged (${event.event})`);
+  } catch (err) {
+    // Telemetry must never affect the customer's job outcome.
+    console.error(`backend: telemetry send failed (${err.message}) — ignoring`);
+  }
+  process.exit(0);
+}
+
+console.error(`backend: unknown command "${cmd}" (expected start|upload|log)`);
 process.exit(1);

@@ -30,6 +30,14 @@ inputs:
     description: Upload the run to the Autobot backend (report hosting + PR comment). 'false' = dry run, Actions artifact only.
     required: false
     default: 'true'
+  run-id:
+    description: Pre-issued run id (fleet/monitor runs, where the backend already metered and created the run). Skips the start step.
+    required: false
+    default: ''
+  artifact-retention-days:
+    description: Retention for the fallback run artifact (empty = repo default)
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -51,7 +59,7 @@ runs:
     # the upload step reports against.
     - name: Start Autobot run
       id: start
-      if: inputs.upload == 'true'
+      if: inputs.upload == 'true' && inputs.run-id == ''
       shell: bash
       env:
         AUTOBOT_API_KEY: ${{ inputs.api-key }}
@@ -65,6 +73,7 @@ runs:
       run: node "${{ github.action_path }}/scripts/serve.mjs" --config "${{ inputs.config-path }}"
 
     - name: Run Autobot
+      id: run
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
@@ -75,14 +84,28 @@ runs:
       run: node "${{ github.action_path }}/engine/ci/run-web.mjs" --config "${{ inputs.config-path }}"
 
     - name: Upload run to Autobot
-      if: always() && inputs.upload == 'true' && steps.start.outputs.run-id != ''
+      if: always() && inputs.upload == 'true' && (inputs.run-id != '' || steps.start.outputs.run-id != '')
       shell: bash
       env:
         AUTOBOT_API_KEY: ${{ inputs.api-key }}
         AUTOBOT_BACKEND_URL: ${{ inputs.backend-url }}
-        AUTOBOT_RUN_ID: ${{ steps.start.outputs.run-id }}
+        AUTOBOT_RUN_ID: ${{ inputs.run-id || steps.start.outputs.run-id }}
         RUN_DIR: ${{ runner.temp }}/autobot-run
       run: node "${{ github.action_path }}/scripts/backend.mjs" upload
+
+    # Operational telemetry for US (did the run itself work?), separate from the
+    # report upload above (what did the run find?). always(): a run step that
+    # died before writing ci-summary.json is exactly the case worth recording.
+    - name: Report run telemetry
+      if: always()
+      shell: bash
+      env:
+        AUTOBOT_API_KEY: ${{ inputs.api-key }}
+        AUTOBOT_BACKEND_URL: ${{ inputs.backend-url }}
+        AUTOBOT_RUN_ID: ${{ inputs.run-id || steps.start.outputs.run-id }}
+        AUTOBOT_RUN_OUTCOME: ${{ steps.run.outcome }}
+        RUN_DIR: ${{ runner.temp }}/autobot-run
+      run: node "${{ github.action_path }}/scripts/backend.mjs" log
 
     - name: Upload run artifact (fallback)
       if: always()
@@ -91,6 +114,7 @@ runs:
         name: autobot-run
         path: ${{ runner.temp }}/autobot-run
         if-no-files-found: warn
+        retention-days: ${{ inputs.artifact-retention-days }}
 
     # Separate step so uploads above always happen even when the gate fails the job.
     - name: Severity gate

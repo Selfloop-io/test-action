@@ -60,8 +60,25 @@ writeFileSync(join(INPUTS_DIR, `${TARGET}.json`), JSON.stringify({
   about: cfg.app.about,
   testData: cfg.test.test_data,
 }, null, 2));
-if (cfg.test.instructions.trim()) {
-  writeFileSync(join(INSTRUCTIONS_DIR, `${TARGET}.md`), cfg.test.instructions);
+// Instructions file = free-text instructions + OFF-LIMITS sections from the
+// blocklist knobs. Config fields and env vars (BLOCKED_PATHS csv, BLOCKED_ACTIONS
+// free text — set by the fleet workflow for monitor runs) are merged additively.
+const blockedPaths = [
+  ...cfg.test.blocked_paths,
+  ...(process.env.BLOCKED_PATHS || '').split(',').map((s) => s.trim()).filter(Boolean),
+];
+const blockedActions = [cfg.test.blocked_actions, process.env.BLOCKED_ACTIONS || '']
+  .map((s) => s.trim()).filter(Boolean);
+const instructionParts = [cfg.test.instructions.trim()];
+if (blockedPaths.length) instructionParts.push(
+  `OFF-LIMITS PATHS — never navigate to or interact with pages under these URL paths:\n${blockedPaths.map((p) => `- ${p}`).join('\n')}`,
+);
+if (blockedActions.length) instructionParts.push(
+  `OFF-LIMITS ACTIONS — never do any of the following, even if a goal seems to call for it:\n${blockedActions.map((a) => `- ${a}`).join('\n')}`,
+);
+const instructions = instructionParts.filter(Boolean).join('\n\n');
+if (instructions) {
+  writeFileSync(join(INSTRUCTIONS_DIR, `${TARGET}.md`), instructions);
 }
 
 const stageEnv = {
@@ -75,6 +92,7 @@ const stageEnv = {
   ...(cfg.test.focus ? { FOCUS: cfg.test.focus } : {}),
   GLOBAL_STEPS: String(cfg.test.steps),
   VIEWPORT: cfg.test.viewport,
+  ...(cfg.test.safe_mode ? { SAFE_MODE: '1' } : {}), // env SAFE_MODE=1 also works (already spread)
 };
 
 // --- stage runner (runner.js contract: detached + process-group kill) --------
@@ -130,6 +148,7 @@ const gate = gateOf(counts, cfg.ci.fail_on);
 writeFileSync(join(RUN_DIR, 'ci-summary.json'), JSON.stringify({
   gate, failOn: cfg.ci.fail_on, counts,
   phaseErrors: Object.keys(phaseErrors).length ? phaseErrors : null,
+  trigger: process.env.AUTOBOT_TRIGGER || 'pr', // pr|push|schedule|manual — backend keys alerting off this
   url, steps: cfg.test.steps, mode: cfg.test.mode,
   startedAt: new Date(startedAt).toISOString(), durationMs: Date.now() - startedAt,
 }, null, 2));

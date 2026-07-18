@@ -37,6 +37,12 @@ export const CONFIG = z.object({
     goal: z.string().default(''),
     focus: z.string().default(''),
     instructions: z.string().default(''),
+    // Monitor-run knobs (also usable from repo configs): safe_mode hardens the
+    // explore doctrine for live production targets; blocked_* become OFF-LIMITS
+    // sections in the instructions file.
+    safe_mode: z.boolean().default(false),
+    blocked_paths: z.array(z.string()).default([]),
+    blocked_actions: z.string().default(''),
     steps: z.number().int().positive().max(200).default(40),
     viewport: z.string().regex(/^\d+x\d+$/).default('1440x900'),
     test_data: z.record(z.any()).default({}),

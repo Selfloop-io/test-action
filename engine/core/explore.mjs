@@ -59,6 +59,21 @@ below — then test the whole app as described.`;
   return '';
 };
 
+// ---- SAFE_MODE (production monitoring) ---------------------------------------
+// Monitor runs explore a LIVE system, so the explore brain gets a hard doctrine
+// appended to the app instructions. Opt-in only: platform entrypoints call
+// withSafeMode(), which is a no-op unless SAFE_MODE=1 — normal runs (and the
+// parity grid) are byte-identical with the flag unset.
+export const SAFE_DOCTRINE = `SAFE MODE — this is a LIVE PRODUCTION system with real users and real data. Hard rules, no exceptions, they override every goal below:
+- NEVER take destructive or irreversible actions: no deleting anything (items, files, messages, projects, accounts), no emptying/clearing data, no cancelling subscriptions.
+- NEVER complete a purchase, checkout, payment, or transfer. You may view pricing/cart/checkout screens but stop before any confirm/pay/place-order step.
+- NEVER send messages, emails, invites, comments, or posts that could reach real users.
+- NEVER change a setting you cannot immediately revert — and revert any setting you do change before moving on.
+- NEVER sign the test account out permanently, change its password or email, or delete it.
+- If a flow's natural next step would violate these rules, record what you verified up to that point as the flow's result and back out instead.`;
+export const withSafeMode = (instructions, env = process.env) =>
+  env.SAFE_MODE === '1' ? [instructions, SAFE_DOCTRINE].filter(Boolean).join('\n\n') : instructions;
+
 const now = () => new Date().toISOString();
 const untriedOf = (n) => (n.controls || []).filter((c) => !n.tried.includes(c));
 const orDash = (a) => (a && a.length ? a.join('; ') : '—');
