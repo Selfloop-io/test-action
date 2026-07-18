@@ -1,0 +1,101 @@
+# Autobot (Selfloop) — autonomous visual QA on every PR.
+#
+# Source of truth lives in the autobot monorepo under action/; the public repo
+# (selfloop-io/test-action) is produced by action/scripts/sync-engine.sh, which
+# vendors v2-engine/{core,web,ci} into engine/ here. Don't edit the public repo
+# directly.
+name: Autobot AI Tester
+description: Autonomous visual QA on your PR — explores your app in a real browser and reports UX flaws.
+branding:
+  icon: eye
+  color: purple
+
+inputs:
+  api-key:
+    description: Autobot API key (set repo secret AUTOBOT_API_KEY — get yours from the Selfloop dashboard)
+    required: true
+  config-path:
+    description: Path to the Autobot config file, relative to working-directory
+    required: false
+    default: .autobot/config.yml
+  working-directory:
+    description: Directory of the app under test (monorepo subdir support)
+    required: false
+    default: .
+  backend-url:
+    description: Autobot backend base URL (staging override for development)
+    required: false
+    default: https://fastfind.app
+  upload:
+    description: Upload the run to the Autobot backend (report hosting + PR comment). 'false' = dry run, Actions artifact only.
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - name: Install Autobot engine
+      shell: bash
+      run: |
+        cd "${{ github.action_path }}/engine"
+        npm ci --omit=dev
+        # Chromium + Linux system libs, resolved from the engine's own Playwright version.
+        npx --no-install playwright install --with-deps chromium
+
+    # Metering check BEFORE any expensive work — a drained account fails here in
+    # seconds instead of after minutes of build + LLM spend. Also issues the run_id
+    # the upload step reports against.
+    - name: Start Autobot run
+      id: start
+      if: inputs.upload == 'true'
+      shell: bash
+      env:
+        AUTOBOT_API_KEY: ${{ inputs.api-key }}
+        AUTOBOT_BACKEND_URL: ${{ inputs.backend-url }}
+      run: node "${{ github.action_path }}/scripts/backend.mjs" start
+
+    - name: Build and serve app
+      id: serve
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: node "${{ github.action_path }}/scripts/serve.mjs" --config "${{ inputs.config-path }}"
+
+    - name: Run Autobot
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        OPENROUTER_API_KEY: ${{ inputs.api-key }}
+        OPENROUTER_BASE_URL: ${{ inputs.backend-url }}/autobot-relay/api/v1
+        TARGET_URL: ${{ steps.serve.outputs.target-url }}
+        RUN_DIR: ${{ runner.temp }}/autobot-run
+      run: node "${{ github.action_path }}/engine/ci/run-web.mjs" --config "${{ inputs.config-path }}"
+
+    - name: Upload run to Autobot
+      if: always() && inputs.upload == 'true' && steps.start.outputs.run-id != ''
+      shell: bash
+      env:
+        AUTOBOT_API_KEY: ${{ inputs.api-key }}
+        AUTOBOT_BACKEND_URL: ${{ inputs.backend-url }}
+        AUTOBOT_RUN_ID: ${{ steps.start.outputs.run-id }}
+        RUN_DIR: ${{ runner.temp }}/autobot-run
+      run: node "${{ github.action_path }}/scripts/backend.mjs" upload
+
+    - name: Upload run artifact (fallback)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: autobot-run
+        path: ${{ runner.temp }}/autobot-run
+        if-no-files-found: warn
+
+    # Separate step so uploads above always happen even when the gate fails the job.
+    - name: Severity gate
+      if: always()
+      shell: bash
+      env:
+        RUN_DIR: ${{ runner.temp }}/autobot-run
+      run: node "${{ github.action_path }}/scripts/check-gate.mjs"
