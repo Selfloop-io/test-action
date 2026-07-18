@@ -5,7 +5,7 @@
 // to the old v2-web-tester/engine/explore.mjs definitions (parity-checked).
 // ============================================================================
 import { z } from 'zod';
-import { makeFlawSchema, makeTurnSchema } from '../core/schemas.mjs';
+import { coerceNullableInt, makeFlawSchema, makeTurnSchema } from '../core/schemas.mjs';
 
 export const FLAW = makeFlawSchema({
   types: ['visual', 'content', 'functional', 'crash', 'performance', 'a11y', 'copy', 'network', 'console'],
@@ -18,7 +18,7 @@ export const TURN = makeTurnSchema({
   flowEvidenceNote: 'the on-page evidence proving the flow completed',
   nextAction: z.object({
     kind: z.enum(['click', 'type', 'navigate', 'back', 'stop']),
-    elementIndex: z.number().int().nullable(),
+    elementIndex: coerceNullableInt(z.number().int().nullable()),
     label: z.string().nullable(),
     text: z.string().nullable(),
     url: z.string().nullable().describe('for kind=navigate: an in-app URL to jump to directly'),

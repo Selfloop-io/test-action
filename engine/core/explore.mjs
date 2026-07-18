@@ -179,7 +179,7 @@ export async function runExplore({ driver, cfg }) {
     const els = obs.els;
     for (const cl of obs.chromeLabels) chromeSeen.add(cl);
 
-    const { object: t } = await generateObject({
+    const turnRequest = {
       model, schema: TURN, providerOptions: reasoningOpts,
       messages: [
         { role: 'system', content: exploreSystem({ about: ABOUT, size: driver.promptSize(), goal: GOAL, focus: FOCUS, entry: ENTRY, credLine,
@@ -191,7 +191,16 @@ export async function runExplore({ driver, cfg }) {
           { type: 'image', image: `data:${obs.img.mimeType};base64,${obs.img.data}` },
         ] },
       ],
-    });
+    };
+    // One malformed turn (schema-invalid output, transient 5xx) must not abort
+    // a whole multi-minute run — retry the SAME turn once before giving up.
+    let t;
+    try {
+      ({ object: t } = await generateObject(turnRequest));
+    } catch (err) {
+      console.log(`  turn ${step}: model output invalid (${err?.name || 'error'}) — retrying once`);
+      ({ object: t } = await generateObject(turnRequest));
+    }
 
     // ledger: register this screen + its controls, and mark the chosen control tried.
     const node = driver.graph.upsertNode(g, obs.sig, t.screen, obs.upsertExtra);

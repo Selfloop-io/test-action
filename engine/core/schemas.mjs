@@ -8,10 +8,21 @@
 // ============================================================================
 import { z } from 'zod';
 
+// Models sporadically emit the STRING "null" (or a stringified number) for
+// nullable int fields — one such flake in a strict schema aborts the whole
+// explore run (seen live: {"elementIndex": "null"} from gemini-flash).
+// Preprocess coerces those; zod-to-json-schema still advertises the inner
+// int|null schema to the model, so prompting is unchanged.
+export const coerceNullableInt = (inner) => z.preprocess((v) => {
+  if (v === 'null' || v === '') return null;
+  if (typeof v === 'string' && /^-?\d+$/.test(v)) return Number(v);
+  return v;
+}, inner);
+
 export const makeFlawSchema = ({ types, bboxNote }) => z.object({
   type: z.enum(types),
   severity: z.enum(['high', 'medium', 'low']), summary: z.string(), detail: z.string(),
-  elementIndex: z.number().int().nullable()
+  elementIndex: coerceNullableInt(z.number().int().nullable())
     .describe('index into the numbered ELEMENTS list above (the same indices used for nextAction) of the element this flaw is about — its real position grounds the annotation box far more reliably than a freehand estimate. Set this whenever the flaw concerns one specific on-screen element; null for whole-screen issues.'),
   bbox: z.object({ x0: z.number(), y0: z.number(), x1: z.number(), y1: z.number() }).nullable()
     .describe(`${bboxNote} Only used as a fallback when elementIndex is null and no listed element matches.`),
